@@ -1,0 +1,156 @@
+#include <SPI.h>
+#include <Ethernet.h>
+#include "stopWatch.h"
+#include "update.h"
+
+stopWatch sW;
+update update;
+
+
+////////////////////////////////////////////////////////////////////////
+//CONFIGURE ETHERNET
+////////////////////////////////////////////////////////////////////////
+    //byte server[] = { 192, 168, 0, 20 }; //ip Address of the server you will connect to
+    byte server[] = { 88, 198, 156, 56 }; //fixed IP of the meetmee.javaprovider.net
+    
+    
+  //byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED }; //uncomment if hard-coded MAC address is wanted
+    byte mac[] = { 0, 0, 0, 0, 0, 0}; //MAC address will be randomly generated at setup
+    
+    
+    EthernetClient client;
+    char inString[32]; // string for incoming serial data
+    int stringPos = 0; // string index counter
+    boolean startRead = false; // is reading?
+
+int EdgePop = 0;
+int PopIn = 0;
+int PopOut = 0;
+int PopOutErr = 0;
+int time = 0;
+int ID = 0;
+
+//...//
+////////////////////////////////////////////////////////////////////////
+//CONFIGURE API SETTINGS
+////////////////////////////////////////////////////////////////////////
+    int im_type = 2; // should be set to 2 for every counter update. 2 stands for counter in the Checkin-DB
+    int sublocation = 0; //set location key according to where the RFID reader is installed, e.g. 1 for Window Bays 1.
+// String thirdpartyid = "9999999"; //actual RFID number. set random number for test purposes...
+//...//
+
+void setup(){
+  Serial.begin(9600);
+  pinMode(13, OUTPUT);
+  Serial.println("And then... it begins");
+
+//....//
+  generate_random_mac_address();
+  print_mac_address();
+  
+  Serial.println("Serial...");
+  Serial.println("Ethernet...");
+  delay(100);
+  Ethernet.begin(mac);
+  Serial.println("Setup finished.");
+//...//
+
+}
+
+void loop(){
+
+  //Output data
+  if(millis() - time >= 300000){
+    //...//
+          //Serial.println();
+          Serial.print("Checksum: ");
+          Serial.print(code[5], HEX);
+          if (code[5] == checksum){
+            Serial.println(" -- passed.");
+
+              Serial.println("RFID: " + rfid);
+              String url_base = "/php/RFIDCheckinSystem/API/checkin_submit_manual.php?";
+
+              //???//
+//requires: popin, popout
+              String url_param1 = "im_type=" + String(im_type);
+              String url_param2 = "&thirdpartyid=" + rfid;
+              String url_param3 = "&sublocation=" + String(sublocation);
+              String url_httptail = " HTTP/1.0";
+              //???//
+
+              String url_complete = url_base + url_param1 + url_param2 + url_param3 + url_httptail;
+              Serial.println("url: " + url_complete);
+//...//
+
+
+    }
+
+//Clear data
+    PopIn = 0;
+    PopOut = 0;
+    PopOutErr = 0;
+    time = millis();
+  }
+
+  sW.start();
+  if(sW.elapsed() > 100){
+    update.ambiVals();
+    sW.reset();
+  }
+
+  /*if LSD is triggered
+   wait until other LSD has been triggered
+   if first LSD untriggered: do nothing
+   wait until first LSD has been untriggered
+   increment population in building
+   
+   if second LSD untriggered then fall back a step
+   
+   It will return 1 when nothing is in the way
+   
+   Walking in pattern Walking out pattern
+   Inner | Outter Inner | Outter
+   0-> 1 | 1 0-> 1 | 1
+   1-> 1 | 0 1-> 0 | 1
+   2-> 0 | 0 2-> 0 | 0
+   3-> 0 | 1 3-> 1 | 0
+   4-> 1 | 1 4-> 1 | 1
+   
+   */
+
+  if(update.checkIn() && !update.checkOut()){
+    while(((update.checkIn() && !update.checkOut()) || (!update.checkIn() && !update.checkOut()))){
+      digitalWrite(13, HIGH);
+      while(((!update.checkIn() && !update.checkOut()) || (!update.checkIn() && update.checkOut()))){
+        while(((!update.checkIn() && update.checkOut()) || (update.checkIn() && update.checkOut()))){
+          if((update.checkIn() && update.checkOut())){
+            EdgePop ++;
+            PopIn ++;
+          }
+        }
+      }
+    }
+  }
+
+  else if(!update.checkIn() && update.checkOut()){
+    while(((!update.checkIn() && update.checkOut()) || (!update.checkIn() && !update.checkOut()))){
+      digitalWrite(13, HIGH);
+      while(((!update.checkIn() && !update.checkOut()) || (update.checkIn() && !update.checkOut()))){
+        while(((update.checkIn() && !update.checkOut()) || (update.checkIn() && update.checkOut())))){
+          if((update.checkIn() && update.checkOut())){
+            if(EdgePop < 1){
+              PopOutErr ++;
+            }
+            else{
+              EdgePop --;
+              PopOut ++;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  digitalWrite(13, LOW);
+  delay(50);
